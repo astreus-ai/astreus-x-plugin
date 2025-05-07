@@ -2,6 +2,8 @@
   "name": "@astreus-ai/x-plugin",
   "version": "0.1.0",
   "description": "X (Twitter) plugin for Astreus",
+  "author": "Astreus Team",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -20,8 +22,6 @@
     "twitter",
     "x"
   ],
-  "author": "Astreus AI",
-  "license": "MIT",
   "dependencies": {
     "@astreus-ai/astreus": "^0.1.0",
     "dotenv": "^16.5.0",
