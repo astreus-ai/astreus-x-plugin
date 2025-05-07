@@ -1,6 +1,6 @@
 {
   "name": "@astreus-ai/x-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "X (Twitter) plugin for Astreus",
   "author": "Astreus Team",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "x"
   ],
   "dependencies": {
-    "@astreus-ai/astreus": "^0.1.0",
+    "@astreus-ai/astreus": "^0.1.1",
     "dotenv": "^16.5.0",
     "axios": "^1.6.0"
   },
