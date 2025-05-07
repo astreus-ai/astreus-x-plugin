@@ -4,6 +4,7 @@ import FormData from 'form-data';
 import { XProfile, XTweet, SearchMode, MediaFile, ReferencedStatus } from './types';
 import { encode as encodeQueryString } from 'querystring';
 import fs from 'fs';
+import { logger } from 'astreus';
 
 /**
  * X (formerly Twitter) API client
@@ -121,7 +122,7 @@ export class XClient {
     if (Object.keys(params).length > 0 && method === 'GET') {
       queryString = '?' + encodeQueryString(params);
     }
-
+    
     // Use OAuth 2.0 if client credentials are available, otherwise use OAuth 1.0a
     let headers: Record<string, string> = {};
     
@@ -146,12 +147,15 @@ export class XClient {
           };
         }
         else {
+          logger.debug('Failed to obtain OAuth 2.0 token, response:', tokenResponse.data);
           throw new Error('Failed to obtain bearer token');
         }
       }
       catch (error) {
-        // Don't log the error - just silently fall back to OAuth 1.0a
-        // console.error('Error getting OAuth 2.0 token:', error);
+        logger.warn('Error getting OAuth 2.0 token, falling back to OAuth 1.0a');
+        if (error instanceof Error) {
+          logger.debug('OAuth 2.0 error:', error.message);
+        }
         
         // Fall back to OAuth 1.0a
         const authHeader = this.generateAuthHeader(method, url, method === 'GET' ? params : {});
@@ -170,16 +174,29 @@ export class XClient {
     }
 
     try {
+      // Check if credentials are available
+      if (!this.apiKey || !this.apiSecret) {
+        logger.error('Missing API key or secret');
+        throw new Error('X API key and secret are required');
+      }
+      
+      if (isV2 && method === 'POST' && !this.accessToken) {
+        logger.warn('POST requests to v2 API may require user access token');
+      }
+      
       const response = await axios({
         method,
         url: `${url}${queryString}`,
         headers,
         data: method !== 'GET' ? data : undefined,
       });
-
+      
       return response.data as T;
     } catch (error) {
+      logger.error('Request error:', error);
       if (axios.isAxiosError(error) && error.response) {
+        logger.error(`API error ${error.response.status}:`, 
+          JSON.stringify(error.response.data || error.message));
         throw new Error(
           `X API error: ${error.response.status} - ${
             JSON.stringify(error.response.data) || error.message
@@ -224,8 +241,8 @@ export class XClient {
       }
       return null;
     } catch (error) {
-      console.error('Error fetching X profile:', error);
-      return null;
+      logger.error('Error fetching X profile:', error);
+      throw error;
     }
   }
 
@@ -259,7 +276,7 @@ export class XClient {
 
       return this.processTweets(response);
     } catch (error) {
-      console.error('Error fetching tweets:', error);
+      logger.error('Error fetching tweets:', error);
       return [];
     }
   }
@@ -288,7 +305,7 @@ export class XClient {
       const tweets = this.processTweets(response);
       return tweets.length > 0 ? tweets[0] : null;
     } catch (error) {
-      console.error('Error fetching tweet:', error);
+      logger.error('Error fetching tweet:', error);
       return null;
     }
   }
@@ -336,7 +353,7 @@ export class XClient {
 
       return this.processTweets(response);
     } catch (error) {
-      console.error('Error searching tweets:', error);
+      logger.error('Error searching tweets:', error);
       return [];
     }
   }
@@ -445,7 +462,7 @@ export class XClient {
     text: string, 
     inReplyTo?: string,
     media?: MediaFile[]
-  ): Promise<string | null> {
+  ): Promise<string | null> {    
     try {
       let endpoint = '/tweets';
       let payload: any = { text };
@@ -477,11 +494,20 @@ export class XClient {
         true,
         payload
       );
-
-      return response.data?.id || null;
+      
+      if (response && response.data && response.data.id) {
+        logger.success(`Tweet successfully posted with ID: ${response.data.id}`);
+        return response.data.id;
+      } else {
+        logger.warn('Could not extract tweet ID from response');
+        return null;
+      }
     } catch (error) {
-      console.error('Error sending tweet:', error);
-      return null;
+      logger.error('Error sending tweet:', error);
+      if (error instanceof Error) {
+        logger.debug('Error details:', error.message);
+      }
+      throw error;
     }
   }
 
@@ -515,7 +541,7 @@ export class XClient {
       
       return response.media_id_string || null;
     } catch (error) {
-      console.error('Error uploading media:', error);
+      logger.error('Error uploading media:', error);
       return null;
     }
   }
@@ -559,7 +585,7 @@ export class XClient {
       
       return response.data?.id || null;
     } catch (error) {
-      console.error('Error sending tweet with poll:', error);
+      logger.error('Error sending tweet with poll:', error);
       return null;
     }
   }
@@ -582,7 +608,7 @@ export class XClient {
       
       return true;
     } catch (error) {
-      console.error('Error retweeting:', error);
+      logger.error('Error retweeting:', error);
       return false;
     }
   }
@@ -605,7 +631,7 @@ export class XClient {
       
       return true;
     } catch (error) {
-      console.error('Error liking tweet:', error);
+      logger.error('Error liking tweet:', error);
       return false;
     }
   }

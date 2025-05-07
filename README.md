@@ -8,6 +8,8 @@ An X (formerly Twitter) integration plugin for the Astreus AI agent framework, a
 - **Comprehensive X Integration**: Access profiles, tweets, search, post tweets, and more
 - **Poll Support**: Create polls on X
 - **Rich Media Support**: Post tweets with images and videos
+- **Enhanced Logging**: Detailed logging of API requests and responses for improved debugging
+- **Integration with Astreus Logger**: Consistent logging patterns with the core framework
 
 ## Installation
 
@@ -29,6 +31,9 @@ X_ACCESS_TOKEN_SECRET=your_access_token_secret
 # Configuration options
 CACHE_TWEET_SECONDS=300  # Cache tweets for 5 minutes
 CACHE_PROFILE_SECONDS=3600  # Cache profiles for 1 hour
+
+# Logging options
+LOG_LEVEL=info  # Options: error, warn, info, debug
 ```
 
 ## Usage
@@ -41,6 +46,9 @@ import XPlugin from 'astreus-x-plugin';
 
 // Create an X plugin instance
 const xPlugin = new XPlugin();
+
+// Initialize the plugin
+await xPlugin.init();
 
 // Create an agent with the X plugin
 const agent = new Agent({
@@ -65,8 +73,12 @@ const xPlugin = new XPlugin({
   apiSecret: 'your_api_secret',
   accessToken: 'your_access_token',
   accessSecret: 'your_access_token_secret',
-  cacheTweetSeconds: 600
+  cacheTweetSeconds: 600,
+  logLevel: 'debug'  // Set logging verbosity
 });
+
+// Initialize the plugin
+await xPlugin.init();
 
 // Create an agent with the plugin
 const agent = new Agent({
@@ -87,6 +99,10 @@ The X plugin provides the following tools to Astreus agents:
 - `x_retweet`: Retweet a tweet
 - `x_like_tweet`: Like a tweet
 - `x_get_trends`: Get current X trends
+
+## Debugging
+
+The plugin includes detailed logging of API requests and responses, which is useful for troubleshooting issues. You can adjust the logging level using the `LOG_LEVEL` environment variable or by setting the `logLevel` option when creating the plugin instance.
 
 ## Contributing
 

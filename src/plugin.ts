@@ -1,7 +1,7 @@
 import { XClient } from './client';
-import { XConfig, XProfile, XTweet, SearchMode } from './types';
+import { XConfig, XProfile, XTweet, SearchMode, MediaFile } from './types';
 import dotenv from 'dotenv';
-import { ToolParameterSchema, Plugin, PluginConfig, PluginInstance } from 'astreus';
+import { ToolParameterSchema, Plugin, PluginConfig, PluginInstance, logger } from 'astreus';
 
 // Load environment variables
 dotenv.config();
@@ -44,8 +44,17 @@ export class XPlugin implements PluginInstance {
    * Initialize the X client
    */
   async init(): Promise<void> {
+    // Check if API credentials are provided
     if (!this.xConfig.apiKey || !this.xConfig.apiSecret) {
+      logger.error('Missing required API key and/or secret');
+      logger.error('Please check your .env file and ensure X_API_KEY and X_API_SECRET_KEY are set');
       throw new Error('X API key and secret are required');
+    }
+    
+    // For sending tweets, we need access token and secret
+    if (!this.xConfig.accessToken || !this.xConfig.accessSecret) {
+      logger.warn('Missing user access token and/or secret');
+      logger.warn('You may not be able to post tweets or perform other write operations');
     }
     
     this.client = new XClient(
@@ -59,6 +68,19 @@ export class XPlugin implements PluginInstance {
 
     // Update tools with initialized client
     this.initializeTools();
+    
+    // Log a summary of tools instead of individual tool logs
+    this.logToolsSummary();
+    
+    logger.success('X plugin initialized successfully');
+  }
+
+  /**
+   * Log a summary of the tools initialized
+   */
+  private logToolsSummary(): void {
+    const toolNames = Array.from(this.tools.keys());
+    logger.info(`X plugin registered ${toolNames.length} tools: ${toolNames.join(', ')}`);
   }
 
   /**
@@ -80,28 +102,56 @@ export class XPlugin implements PluginInstance {
 
           // Execute the appropriate method based on the tool name
           const methodName = manifest.name.replace('x_', '');
+          let result;
           
-          switch (methodName) {
-            case 'get_profile':
-              return await this.getProfile(params);
-            case 'get_tweets':
-              return await this.getTweets(params);
-            case 'get_tweet':
-              return await this.getTweet(params);
-            case 'search_tweets':
-              return await this.searchTweets(params);
-            case 'send_tweet':
-              return await this.sendTweet(params);
-            case 'send_tweet_with_poll':
-              return await this.sendTweetWithPoll(params);
-            case 'retweet':
-              return await this.retweet(params);
-            case 'like_tweet':
-              return await this.likeTweet(params);
-            case 'get_trends':
-              return await this.getTrends();
-            default:
-              throw new Error(`Unknown method: ${methodName}`);
+          try {
+            switch (methodName) {
+              case 'get_profile':
+                result = await this.getProfile(params);
+                break;
+              case 'get_tweets':
+                result = await this.getTweets(params);
+                break;
+              case 'get_tweet':
+                result = await this.getTweet(params);
+                break;
+              case 'search_tweets':
+                result = await this.searchTweets(params);
+                break;
+              case 'send_tweet':
+                result = await this.sendTweet(params);
+                break;
+              case 'send_tweet_with_poll':
+                result = await this.sendTweetWithPoll(params);
+                break;
+              case 'retweet':
+                result = await this.retweet(params);
+                break;
+              case 'like_tweet':
+                result = await this.likeTweet(params);
+                break;
+              case 'get_trends':
+                result = await this.getTrends();
+                break;
+              default:
+                throw new Error(`Unknown method: ${methodName}`);
+            }
+            
+            // Ensure we return a newly created object, not a reference to the input
+            if (result === params) {
+              if (typeof params === 'object' && params !== null) {
+                result = { ...params };
+              }
+            }
+            
+            return result;
+          } catch (error) {
+            logger.error(`Error executing tool ${manifest.name}:`, error);
+            if (error instanceof Error) {
+              throw error;
+            } else {
+              throw new Error(`Error executing ${methodName}: ${error}`);
+            }
           }
         }
       };
@@ -336,6 +386,28 @@ export class XPlugin implements PluginInstance {
   }
 
   /**
+   * Get a specific tool by plugin name and tool name
+   * This is an extra helper not defined in the PluginInstance interface
+   */
+  getToolByFullName(fullName: string): Plugin | undefined {
+    // Look for the tool directly
+    return this.tools.get(fullName);
+  }
+  
+  /**
+   * Check if this is a valid PluginInstance
+   * This is a diagnostic method to help debug issues
+   */
+  public debugPluginInterface(): boolean {
+    // Check if the plugin implements the PluginInstance interface
+    return typeof this.getTools === 'function' &&
+      typeof this.getTool === 'function' &&
+      typeof this.registerTool === 'function' &&
+      typeof this.removeTool === 'function' &&
+      typeof this.name === 'string';
+  }
+
+  /**
    * Get an X user profile by username
    */
   async getProfile(params: Record<string, any>): Promise<XProfile | null> {
@@ -394,40 +466,91 @@ export class XPlugin implements PluginInstance {
   /**
    * Send a new tweet
    */
-  async sendTweet(params: Record<string, any>): Promise<string | null> {
-    if (!this.client) await this.init();
+  async sendTweet(params: Record<string, any>): Promise<any> {
     if (!this.client) throw new Error('X client not initialized');
-
-    const text = params.text;
+    
+    const { text, in_reply_to, media } = params;
+    
     if (!text) throw new Error('Tweet text is required');
-
-    return await this.client.sendTweet(text, params.in_reply_to, params.media);
+    
+    try {
+      let mediaFiles: MediaFile[] | undefined;
+      
+      if (media && Array.isArray(media)) {
+        mediaFiles = media;
+      }
+      
+      const tweetId = await this.client.sendTweet(text, in_reply_to, mediaFiles);
+      
+      if (tweetId) {
+        return {
+          success: true,
+          id: tweetId,
+          text,
+        };
+      } else {
+        logger.warn('Tweet may have been posted but no ID was returned');
+        return {
+          success: true,
+          id: null,
+          text,
+          note: 'Tweet may have been posted but no ID was returned'
+        };
+      }
+    } catch (error) {
+      logger.error('Error posting tweet:', error);
+      
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
    * Send a new tweet with a poll
    */
-  async sendTweetWithPoll(params: Record<string, any>): Promise<string | null> {
-    if (!this.client) await this.init();
+  async sendTweetWithPoll(params: Record<string, any>): Promise<any> {
     if (!this.client) throw new Error('X client not initialized');
-
-    const text = params.text;
+    
+    const { text, poll_options, duration_minutes } = params;
+    
     if (!text) throw new Error('Tweet text is required');
-
-    const options = params.options;
-    if (!options || !Array.isArray(options) || options.length < 2 || options.length > 4) {
-      throw new Error('Poll options must be an array of 2-4 strings');
+    if (!poll_options || !Array.isArray(poll_options) || poll_options.length < 2) {
+      throw new Error('At least two poll options are required');
     }
-
-    const durationMinutes = params.duration_minutes;
-    if (!durationMinutes || durationMinutes < 5 || durationMinutes > 10080) {
-      throw new Error('Poll duration must be between 5 and 10080 minutes');
+    
+    try {
+      const tweetId = await this.client.sendTweetWithPoll(text, {
+        options: poll_options,
+        durationMinutes: duration_minutes || 1440 // Default to 24 hours
+      });
+      
+      if (tweetId) {
+        return {
+          success: true,
+          id: tweetId,
+          text,
+          poll_options,
+        };
+      } else {
+        logger.warn('Tweet with poll may have been posted but no ID was returned');
+        return {
+          success: true,
+          id: null,
+          text,
+          poll_options,
+          note: 'Tweet with poll may have been posted but no ID was returned'
+        };
+      }
+    } catch (error) {
+      logger.error('Error posting tweet with poll:', error);
+      
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
-
-    return await this.client.sendTweetWithPoll(text, {
-      options,
-      durationMinutes
-    });
   }
 
   /**

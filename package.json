@@ -1,5 +1,5 @@
 {
-  "name": "astreus-x-plugin",
+  "name": "@astreus-ai/x-plugin",
   "version": "0.1.0",
   "description": "X (Twitter) plugin for Astreus",
   "main": "dist/index.js",
@@ -23,17 +23,13 @@
   "author": "Astreus AI",
   "license": "MIT",
   "dependencies": {
-    "astreus": "file:/Users/berke/Projects/astreus-ai/astreus",
+    "@astreus-ai/astreus": "^0.1.0",
     "dotenv": "^16.5.0",
-    "twitter-api-v2": "^1.15.2",
-    "puppeteer": "^21.11.0",
     "axios": "^1.6.0"
   },
   "devDependencies": {
-    "@types/axios": "^0.14.0",
     "@types/jest": "^29.5.5",
     "@types/node": "^20.8.2",
-    "@types/puppeteer": "^7.0.4",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.50.0",
