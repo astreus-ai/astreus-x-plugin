@@ -4,7 +4,7 @@ import FormData from 'form-data';
 import { XProfile, XTweet, SearchMode, MediaFile, ReferencedStatus } from './types';
 import { encode as encodeQueryString } from 'querystring';
 import fs from 'fs';
-import { logger } from 'astreus';
+import { logger } from '@astreus-ai/astreus';
 
 /**
  * X (formerly Twitter) API client

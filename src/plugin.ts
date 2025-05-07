@@ -1,7 +1,7 @@
 import { XClient } from './client';
 import { XConfig, XProfile, XTweet, SearchMode, MediaFile } from './types';
 import dotenv from 'dotenv';
-import { ToolParameterSchema, Plugin, PluginConfig, PluginInstance, logger } from 'astreus';
+import { ToolParameterSchema, Plugin, PluginConfig, PluginInstance, logger } from '@astreus-ai/astreus';
 
 // Load environment variables
 dotenv.config();
