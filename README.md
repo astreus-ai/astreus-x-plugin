@@ -14,7 +14,7 @@ An X (formerly Twitter) integration plugin for the Astreus AI agent framework, a
 ## Installation
 
 ```bash
-npm install astreus-x-plugin
+npm install @astreus-ai/x-plugin
 ```
 
 ## Configuration
@@ -41,8 +41,8 @@ LOG_LEVEL=info  # Options: error, warn, info, debug
 ### Basic Usage
 
 ```typescript
-import { Agent } from 'astreus';
-import XPlugin from 'astreus-x-plugin';
+import { createAgent } from 'astreus';
+import XPlugin from '@astreus-ai/x-plugin';
 
 // Create an X plugin instance
 const xPlugin = new XPlugin();
@@ -51,21 +51,21 @@ const xPlugin = new XPlugin();
 await xPlugin.init();
 
 // Create an agent with the X plugin
-const agent = new Agent({
+const agent = await createAgent({
+  name: 'Social Media Agent',
+  description: 'An agent that can interact with X',
   plugins: [xPlugin]
 });
 
 // Now the agent can use X functionality
-const result = await agent.run(`
-  Find the latest tweets from Elon Musk and summarize them.
-`);
+const response = await agent.chat(`Find the latest tweets from Elon Musk and summarize them.`);
 ```
 
 ### Custom Configuration
 
 ```typescript
-import { Agent } from 'astreus';
-import XPlugin from 'astreus-x-plugin';
+import { createAgent } from 'astreus';
+import XPlugin from '@astreus-ai/x-plugin';
 
 // Create a plugin with custom configuration
 const xPlugin = new XPlugin({
@@ -81,7 +81,9 @@ const xPlugin = new XPlugin({
 await xPlugin.init();
 
 // Create an agent with the plugin
-const agent = new Agent({
+const agent = await createAgent({
+  name: 'Social Media Agent',
+  description: 'An agent that can interact with X',
   plugins: [xPlugin]
 });
 ```
@@ -100,14 +102,22 @@ The X plugin provides the following tools to Astreus agents:
 - `x_like_tweet`: Like a tweet
 - `x_get_trends`: Get current X trends
 
-## Debugging
-
-The plugin includes detailed logging of API requests and responses, which is useful for troubleshooting issues. You can adjust the logging level using the `LOG_LEVEL` environment variable or by setting the `logLevel` option when creating the plugin instance.
-
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-MIT 
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 📬 Contact
+
+Astreus Team - [https://astreus.org](https://astreus.org)
+
+Project Link: [https://github.com/astreus-ai/astreus-x-plugin](https://github.com/astreus-ai/astreus-x-plugin) 
