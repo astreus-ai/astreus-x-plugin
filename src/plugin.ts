@@ -6,6 +6,31 @@ import { ToolParameterSchema, Plugin, PluginConfig, PluginInstance, logger } fro
 // Load environment variables
 dotenv.config();
 
+// Step 1: Add a new interface for OpenAI function schemas at the top of the file
+interface OpenAIFunctionDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: string;
+    properties: Record<string, any>;
+    required?: string[];
+  };
+}
+
+// Provider tools - update the interface
+export interface ProviderTool {
+  name: string;
+  description?: string;
+  // Support direct OpenAI function schema to avoid conversions
+  parameters?: {
+    type: string;
+    properties: Record<string, any>;
+    required?: string[];
+  } | any;
+  // This flag indicates this is a native OpenAI schema
+  native?: boolean;
+}
+
 /**
  * X Plugin for Astreus
  * This plugin provides X API functionality for Astreus agents
@@ -16,6 +41,7 @@ export class XPlugin implements PluginInstance {
   private client: XClient | null = null;
   private xConfig: XConfig;
   private tools: Map<string, Plugin> = new Map();
+  private functionDefinitions: Map<string, OpenAIFunctionDefinition> = new Map(); // New map for OpenAI schema
   public config: PluginConfig;
 
   constructor(config?: XConfig) {
@@ -53,8 +79,13 @@ export class XPlugin implements PluginInstance {
     
     // For sending tweets, we need access token and secret
     if (!this.xConfig.accessToken || !this.xConfig.accessSecret) {
-      logger.warn('Missing user access token and/or secret');
+      logger.warn('Missing X user access token and/or secret');
       logger.warn('You may not be able to post tweets or perform other write operations');
+    }
+    
+    if (!this.xConfig.clientId || !this.xConfig.clientSecret) {
+      logger.warn('Missing X client ID and/or client secret');
+      logger.warn('OAuth 2.0 authentication will not be available');
     }
     
     this.client = new XClient(
@@ -66,13 +97,35 @@ export class XPlugin implements PluginInstance {
       this.xConfig.clientSecret
     );
 
-    // Update tools with initialized client
-    this.initializeTools();
-    
-    // Log a summary of tools instead of individual tool logs
-    this.logToolsSummary();
-    
-    logger.success('X plugin initialized successfully');
+    // Verify credentials by making a test API call
+    try {
+      logger.info('Verifying X API credentials...');
+      
+      // Try to get a user profile as a test
+      await this.client.getProfile('X');
+      
+      logger.info('Successfully connected to X API with read permissions');
+      
+      // Update tools with initialized client
+      this.initializeTools();
+      
+      // Log a summary of tools instead of individual tool logs
+      this.logToolsSummary();
+      
+      logger.success('X plugin initialized successfully');
+    } catch (error) {
+      logger.error('Failed to verify X API credentials', error);
+      if (error instanceof Error) {
+        // Check for common authentication errors
+        if (error.message.includes('401') || error.message.includes('403')) {
+          logger.error('Authentication error. Please check your X API credentials.');
+        }
+        
+        throw new Error(`X API initialization failed: ${error.message}`);
+      } else {
+        throw new Error('X API initialization failed with unknown error');
+      }
+    }
   }
 
   /**
@@ -87,77 +140,66 @@ export class XPlugin implements PluginInstance {
    * Initialize tools for Astreus compatibility
    */
   private initializeTools(): void {
-    // Convert chat manifests to Astreus Plugin objects
-    const manifests = this.getChatManifests();
+    // Get function definitions
+    const functionDefs = this.getFunctionDefinitions();
     
-    for (const manifest of manifests) {
+    for (const funcDef of functionDefs) {
+      // Store the original OpenAI function definition format
+      this.functionDefinitions.set(funcDef.name, funcDef);
+      
+      // Create Astreus Plugin format by converting from OpenAI schema
       const plugin: Plugin = {
-        name: manifest.name,
-        description: manifest.description,
-        parameters: this.convertParameters(manifest.parameters),
+        name: funcDef.name,
+        description: funcDef.description,
+        // Convert from OpenAI schema to Astreus ToolParameterSchema[]
+        parameters: this.convertOpenAISchemaToToolParameters(funcDef.parameters),
         execute: async (params: Record<string, any>) => {
           // Make sure client is initialized
           if (!this.client) await this.init();
           if (!this.client) throw new Error('X client not initialized');
 
-          // Execute the appropriate method based on the tool name
-          const methodName = manifest.name.replace('x_', '');
+          // Execute method based on the tool name
+          const methodName = funcDef.name.replace('x_', '');
+          
+          // Log tool execution for debugging
+          logger.debug(`TOOL EXECUTION: Running tool ${funcDef.name}`);
+          
           let result;
           
           try {
             switch (methodName) {
-              case 'get_profile':
-                result = await this.getProfile(params);
+              case 'get_profile': result = await this.getProfile(params); break;
+              case 'get_tweets': result = await this.getTweets(params); break;
+              case 'get_tweet': result = await this.getTweet(params); break;
+              case 'search_tweets': result = await this.searchTweets(params); break;
+              case 'send_tweet': 
+                logger.info(`Sending tweet: "${params.text}"`);
+                result = await this.sendTweet(params); 
                 break;
-              case 'get_tweets':
-                result = await this.getTweets(params);
-                break;
-              case 'get_tweet':
-                result = await this.getTweet(params);
-                break;
-              case 'search_tweets':
-                result = await this.searchTweets(params);
-                break;
-              case 'send_tweet':
-                result = await this.sendTweet(params);
-                break;
-              case 'send_tweet_with_poll':
-                result = await this.sendTweetWithPoll(params);
-                break;
-              case 'retweet':
-                result = await this.retweet(params);
-                break;
-              case 'like_tweet':
-                result = await this.likeTweet(params);
-                break;
-              case 'get_trends':
-                result = await this.getTrends();
-                break;
-              default:
-                throw new Error(`Unknown method: ${methodName}`);
+              case 'send_tweet_with_poll': result = await this.sendTweetWithPoll(params); break;
+              case 'retweet': result = await this.retweet(params); break;
+              case 'like_tweet': result = await this.likeTweet(params); break;
+              case 'get_trends': result = await this.getTrends(); break;
+              default: throw new Error(`Unknown method: ${methodName}`);
             }
             
-            // Ensure we return a newly created object, not a reference to the input
-            if (result === params) {
-              if (typeof params === 'object' && params !== null) {
-                result = { ...params };
-              }
+            // Return result
+            if (result === params && typeof params === 'object' && params !== null) {
+              result = { ...params };
             }
             
+            logger.debug(`Tool ${funcDef.name} completed execution`);
             return result;
           } catch (error) {
-            logger.error(`Error executing tool ${manifest.name}:`, error);
-            if (error instanceof Error) {
-              throw error;
-            } else {
-              throw new Error(`Error executing ${methodName}: ${error}`);
-            }
+            logger.error(`Error executing tool ${funcDef.name}:`, error);
+            if (error instanceof Error) throw error;
+            else throw new Error(`Error executing ${methodName}: ${error}`);
           }
         }
       };
 
       // Add tool to the map
-      this.tools.set(manifest.name, plugin);
+      this.tools.set(funcDef.name, plugin);
     }
 
     // Update plugin config tools
@@ -165,35 +207,9 @@ export class XPlugin implements PluginInstance {
   }
 
   /**
-   * Convert OpenAPI-style parameters to Astreus ToolParameterSchema
-   */
-  private convertParameters(params: any): ToolParameterSchema[] {
-    const result: ToolParameterSchema[] = [];
-    
-    if (params && params.properties) {
-      for (const [name, prop] of Object.entries<any>(params.properties)) {
-        const type = prop.type as string;
-        // Ensure type is one of the allowed values
-        const validType = ["string", "number", "boolean", "object", "array"].includes(type) 
-          ? type as "string" | "number" | "boolean" | "object" | "array"
-          : "string"; // Default to string if not a valid type
-          
-        result.push({
-          name,
-          type: validType,
-          description: prop.description || '',
-          required: params.required?.includes(name) || false
-        });
-      }
-    }
-    
-    return result;
-  }
-
-  /**
    * Get the manifests for chatbot function calls
    */
-  getChatManifests() {
+  getFunctionDefinitions(): OpenAIFunctionDefinition[] {
     return [
       {
         name: 'x_get_profile',
@@ -203,10 +219,11 @@ export class XPlugin implements PluginInstance {
           properties: {
             username: {
               type: 'string',
-              description: 'The X username to get the profile for',
+              description: 'The X username to get the profile for (without the @ symbol)',
+              pattern: '^[A-Za-z0-9_]{1,15}$'
             },
           },
-          required: ['username'],
+          required: ['username']
         },
       },
       {
@@ -217,14 +234,18 @@ export class XPlugin implements PluginInstance {
           properties: {
             username: {
               type: 'string',
-              description: 'The X username to get tweets from',
+              description: 'The X username to get tweets from (without the @ symbol)',
+              pattern: '^[A-Za-z0-9_]{1,15}$'
             },
             limit: {
-              type: 'number',
-              description: 'The maximum number of tweets to return (default: 10)',
+              type: 'integer',
+              description: 'The maximum number of tweets to return',
+              minimum: 1,
+              maximum: 100,
+              default: 10
             },
           },
-          required: ['username'],
+          required: ['username']
         },
       },
       {
@@ -236,9 +257,10 @@ export class XPlugin implements PluginInstance {
             id: {
               type: 'string',
               description: 'The ID of the tweet to retrieve',
+              pattern: '^[0-9]+$'
             },
           },
-          required: ['id'],
+          required: ['id']
         },
       },
       {
@@ -250,18 +272,24 @@ export class XPlugin implements PluginInstance {
             query: {
               type: 'string',
               description: 'The search query',
+              minLength: 1,
+              maxLength: 500
             },
             limit: {
-              type: 'number',
-              description: 'The maximum number of tweets to return (default: 10)',
+              type: 'integer',
+              description: 'The maximum number of tweets to return',
+              minimum: 1,
+              maximum: 100,
+              default: 10
             },
             mode: {
               type: 'string',
               enum: ['latest', 'top', 'people', 'photos', 'videos'],
-              description: 'The search mode',
+              description: 'The search mode to use (latest, top, people, photos, or videos)',
+              default: 'latest'
             },
           },
-          required: ['query'],
+          required: ['query']
         },
       },
       {
@@ -272,15 +300,18 @@ export class XPlugin implements PluginInstance {
           properties: {
             text: {
               type: 'string',
-              description: 'The tweet text',
+              description: 'The tweet text content',
+              minLength: 1,
+              maxLength: 280
             },
             in_reply_to: {
               type: 'string',
               description: 'The ID of the tweet to reply to (optional)',
-            },
+              pattern: '^[0-9]+$'
+            }
           },
-          required: ['text'],
-        },
+          required: ['text']
+        }
       },
       {
         name: 'x_send_tweet_with_poll',
@@ -290,22 +321,40 @@ export class XPlugin implements PluginInstance {
           properties: {
             text: {
               type: 'string',
-              description: 'The tweet text',
+              description: 'The tweet text content',
+              minLength: 1,
+              maxLength: 280
             },
-            options: {
-              type: 'array',
-              items: {
-                type: 'string',
-              },
-              description: 'The poll options (2-4 options)',
+            poll_option_1: {
+              type: 'string',
+              description: 'First poll option (required)',
+              maxLength: 25
+            },
+            poll_option_2: {
+              type: 'string',
+              description: 'Second poll option (required)',
+              maxLength: 25
+            },
+            poll_option_3: {
+              type: 'string',
+              description: 'Third poll option (optional)',
+              maxLength: 25
+            },
+            poll_option_4: {
+              type: 'string',
+              description: 'Fourth poll option (optional)',
+              maxLength: 25
             },
             duration_minutes: {
-              type: 'number',
+              type: 'integer',
               description: 'The duration of the poll in minutes (5-10080)',
-            },
+              minimum: 5,
+              maximum: 10080,
+              default: 1440
+            }
           },
-          required: ['text', 'options', 'duration_minutes'],
-        },
+          required: ['text', 'poll_option_1', 'poll_option_2', 'duration_minutes']
+        }
       },
       {
         name: 'x_retweet',
@@ -316,9 +365,10 @@ export class XPlugin implements PluginInstance {
             id: {
               type: 'string',
               description: 'The ID of the tweet to retweet',
+              pattern: '^[0-9]+$'
             },
           },
-          required: ['id'],
+          required: ['id']
         },
       },
       {
@@ -330,9 +380,10 @@ export class XPlugin implements PluginInstance {
             id: {
               type: 'string',
               description: 'The ID of the tweet to like',
+              pattern: '^[0-9]+$'
             },
           },
-          required: ['id'],
+          required: ['id']
         },
       },
       {
@@ -340,8 +391,14 @@ export class XPlugin implements PluginInstance {
         description: 'Get current X trends',
         parameters: {
           type: 'object',
-          properties: {},
-          required: [],
+          properties: {
+            woeid: {
+              type: 'integer',
+              description: 'The Yahoo! Where On Earth ID of the location to get trends for (default: 1 for worldwide)',
+              default: 1
+            }
+          },
+          required: []
         },
       },
     ];
@@ -467,42 +524,67 @@ export class XPlugin implements PluginInstance {
    * Send a new tweet
    */
   async sendTweet(params: Record<string, any>): Promise<any> {
-    if (!this.client) throw new Error('X client not initialized');
+    if (!this.client) {
+      logger.error('X client not initialized in sendTweet method');
+      throw new Error('X client not initialized');
+    }
     
-    const { text, in_reply_to, media } = params;
+    const { text, in_reply_to } = params;
     
-    if (!text) throw new Error('Tweet text is required');
+    if (!text) {
+      logger.error('Tweet text is missing in sendTweet parameters');
+      throw new Error('Tweet text is required');
+    }
+    
+    logger.info(`About to send tweet with text: "${text}"${in_reply_to ? ` as reply to: ${in_reply_to}` : ''}`);
     
     try {
-      let mediaFiles: MediaFile[] | undefined;
+      logger.debug(`Calling X client sendTweet method with parameters:`, { 
+        textLength: text.length, 
+        hasReplyTo: !!in_reply_to 
+      });
       
-      if (media && Array.isArray(media)) {
-        mediaFiles = media;
-      }
-      
-      const tweetId = await this.client.sendTweet(text, in_reply_to, mediaFiles);
+      const tweetId = await this.client.sendTweet(text, in_reply_to);
       
       if (tweetId) {
+        logger.info(`Tweet successfully posted with ID: ${tweetId}`);
         return {
           success: true,
           id: tweetId,
           text,
         };
       } else {
-        logger.warn('Tweet may have been posted but no ID was returned');
+        logger.warn(`No tweet ID returned from X API, this might indicate the tweet was not actually posted`);
+        logger.debug(`Tweet attempt details: Text: "${text.substring(0, 20)}..."`);
         return {
-          success: true,
+          success: true, // We keep this as true for backward compatibility
           id: null,
           text,
-          note: 'Tweet may have been posted but no ID was returned'
+          note: 'Tweet may have been posted but no ID was returned - please check X directly'
         };
       }
     } catch (error) {
-      logger.error('Error posting tweet:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error posting tweet: ${errorMessage}`);
+      logger.debug(`Tweet that failed: "${text}"`);
+      
+      if (error instanceof Error && error.stack) {
+        logger.debug(`Error stack trace: ${error.stack}`);
+      }
+      
+      // Check for specific error types
+      if (errorMessage.includes('401')) {
+        logger.error('Authentication error - check X API credentials and token validity');
+      } else if (errorMessage.includes('403')) {
+        logger.error('Permission error - your X app may not have write permissions');
+      } else if (errorMessage.includes('duplicate')) {
+        logger.warn('Duplicate tweet error - X doesn\'t allow identical tweets');
+      }
       
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
+        text: text, // Include the text that failed for easier debugging
       };
     }
   }
@@ -513,38 +595,42 @@ export class XPlugin implements PluginInstance {
   async sendTweetWithPoll(params: Record<string, any>): Promise<any> {
     if (!this.client) throw new Error('X client not initialized');
     
-    const { text, poll_options, duration_minutes } = params;
+    const { text, poll_option_1, poll_option_2, poll_option_3, poll_option_4, duration_minutes } = params;
     
     if (!text) throw new Error('Tweet text is required');
-    if (!poll_options || !Array.isArray(poll_options) || poll_options.length < 2) {
+    if (!poll_option_1 || !poll_option_2) {
       throw new Error('At least two poll options are required');
     }
     
+    logger.info(`About to send tweet with poll: "${text}"`);
+    
     try {
+      logger.debug('Calling X client sendTweetWithPoll method');
       const tweetId = await this.client.sendTweetWithPoll(text, {
-        options: poll_options,
+        options: [poll_option_1, poll_option_2, poll_option_3, poll_option_4].filter(Boolean),
         durationMinutes: duration_minutes || 1440 // Default to 24 hours
       });
       
       if (tweetId) {
+        logger.info(`Tweet with poll successfully posted with ID: ${tweetId}`);
         return {
           success: true,
           id: tweetId,
           text,
-          poll_options,
+          poll_options: [poll_option_1, poll_option_2, poll_option_3, poll_option_4].filter(Boolean),
         };
       } else {
-        logger.warn('Tweet with poll may have been posted but no ID was returned');
+        logger.warn('No tweet ID returned from X API for poll tweet');
         return {
           success: true,
           id: null,
           text,
-          poll_options,
+          poll_options: [poll_option_1, poll_option_2, poll_option_3, poll_option_4].filter(Boolean),
           note: 'Tweet with poll may have been posted but no ID was returned'
         };
       }
     } catch (error) {
-      logger.error('Error posting tweet with poll:', error);
+      logger.error(`Error posting tweet with poll: ${error}`);
       
       return {
         success: false,
@@ -556,27 +642,77 @@ export class XPlugin implements PluginInstance {
   /**
    * Retweet a tweet
    */
-  async retweet(params: Record<string, any>): Promise<boolean> {
+  async retweet(params: Record<string, any>): Promise<any> {
     if (!this.client) await this.init();
     if (!this.client) throw new Error('X client not initialized');
 
     const id = params.id;
     if (!id) throw new Error('Tweet ID is required');
 
-    return await this.client.retweet(id);
+    logger.info(`Attempting to retweet tweet with ID: ${id}`);
+    
+    try {
+      const success = await this.client.retweet(id);
+      
+      if (success) {
+        logger.info(`Successfully retweeted tweet ${id}`);
+        return { 
+          success: true,
+          id
+        };
+      } else {
+        logger.warn(`Failed to retweet tweet ${id}`);
+        return { 
+          success: false,
+          id,
+          note: 'Retweet API call failed'
+        };
+      }
+    } catch (error) {
+      logger.error(`Error retweeting tweet: ${error}`);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
    * Like a tweet
    */
-  async likeTweet(params: Record<string, any>): Promise<boolean> {
+  async likeTweet(params: Record<string, any>): Promise<any> {
     if (!this.client) await this.init();
     if (!this.client) throw new Error('X client not initialized');
 
     const id = params.id;
     if (!id) throw new Error('Tweet ID is required');
 
-    return await this.client.likeTweet(id);
+    logger.info(`Attempting to like tweet with ID: ${id}`);
+    
+    try {
+      const success = await this.client.likeTweet(id);
+      
+      if (success) {
+        logger.info(`Successfully liked tweet ${id}`);
+        return { 
+          success: true,
+          id
+        };
+      } else {
+        logger.warn(`Failed to like tweet ${id}`);
+        return { 
+          success: false,
+          id,
+          note: 'Like API call failed'
+        };
+      }
+    } catch (error) {
+      logger.error(`Error liking tweet: ${error}`);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
@@ -588,7 +724,66 @@ export class XPlugin implements PluginInstance {
 
     throw new Error('getTrends is not implemented in the X API client');
   }
+
+  /**
+   * Get the OpenAI native functions for use with the OpenAI API
+   */
+  getNativeOpenAIFunctions(): OpenAIFunctionDefinition[] {
+    return Array.from(this.functionDefinitions.values());
+  }
+
+  /**
+   * Convert OpenAI function parameters to Astreus ToolParameterSchema array
+   */
+  private convertOpenAISchemaToToolParameters(openAISchema: any): ToolParameterSchema[] {
+    const result: ToolParameterSchema[] = [];
+    
+    if (!openAISchema || !openAISchema.properties) {
+      return result;
+    }
+    
+    // Get the required parameters
+    const requiredParams = openAISchema.required || [];
+    
+    // Convert each property to a ToolParameterSchema
+    for (const [name, prop] of Object.entries<any>(openAISchema.properties)) {
+      // Basic parameter properties
+      const parameter: ToolParameterSchema = {
+        name,
+        type: prop.type as any,
+        description: prop.description || `Parameter ${name}`,
+        required: requiredParams.includes(name)
+      };
+      
+      // Add additional properties
+      if (prop.default !== undefined) {
+        parameter.default = prop.default;
+      }
+      
+      // Note: ToolParameterSchema doesn't support enum directly
+      // Include enum values in the description for reference
+      if (prop.enum) {
+        parameter.description = `${parameter.description} (Allowed values: ${prop.enum.join(', ')})`;
+      }
+      
+      result.push(parameter);
+    }
+    
+    return result;
+  }
 }
 
 // Default export
-export default XPlugin; 
+export default XPlugin;
+
+/**
+ * Create a native OpenAI tool from a plugin's function definition
+ */
+export function createNativeOpenAITool(name: string, description: string, parameters: any): ProviderTool {
+  return {
+    name,
+    description,
+    parameters,
+    native: true // Set the flag to indicate this is a native schema
+  };
+} 

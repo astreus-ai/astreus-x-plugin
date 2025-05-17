@@ -118,6 +118,9 @@ export class XClient {
     const baseUrl = isV2 ? this.baseUrlV2 : this.baseUrl;
     const url = `${baseUrl}${endpoint}`;
     
+    logger.debug(`API Request: ${method} ${url}`);
+    logger.debug(`Request parameters: ${JSON.stringify(params)}`);
+    
     let queryString = '';
     if (Object.keys(params).length > 0 && method === 'GET') {
       queryString = '?' + encodeQueryString(params);
@@ -128,36 +131,45 @@ export class XClient {
     
     if (this.clientId && this.clientSecret && isV2) {
       // Use OAuth 2.0 for V2 endpoints when client credentials are available
+      logger.debug(`Attempting OAuth 2.0 authentication with client ID: ${this.clientId.substring(0, 4)}...`);
       try {
         // Get bearer token using client credentials
+        const tokenUrl = 'https://api.twitter.com/2/oauth2/token';
+        
+        logger.debug(`Requesting OAuth 2.0 token from ${tokenUrl}`);
+        
         const tokenResponse = await axios({
           method: 'POST',
-          url: 'https://api.twitter.com/2/oauth2/token',
+          url: tokenUrl,
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             Authorization: `Basic ${Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64')}`
           },
-          data: `grant_type=client_credentials&client_id=${encodeURIComponent(this.clientId)}&client_secret=${encodeURIComponent(this.clientSecret)}&client_type=service_client&scope=tweet.read%20users.read`
+          data: `grant_type=client_credentials&client_id=${encodeURIComponent(this.clientId)}&client_secret=${encodeURIComponent(this.clientSecret)}&client_type=service_client&scope=tweet.read%20tweet.write%20users.read`
         });
+        
+        logger.debug(`OAuth 2.0 token response status: ${tokenResponse.status}`);
         
         if (tokenResponse.data && tokenResponse.data.access_token) {
           headers = {
             Authorization: `Bearer ${tokenResponse.data.access_token}`,
             'Content-Type': data instanceof FormData ? 'multipart/form-data' : 'application/json',
           };
+          logger.debug(`Successfully obtained OAuth 2.0 bearer token. Token type: ${tokenResponse.data.token_type}, Scope: ${tokenResponse.data.scope || 'unknown'}`);
         }
         else {
-          logger.debug('Failed to obtain OAuth 2.0 token, response:', tokenResponse.data);
+          logger.debug(`Failed to obtain OAuth 2.0 token. Response: ${JSON.stringify(tokenResponse.data)}`);
           throw new Error('Failed to obtain bearer token');
         }
       }
       catch (error) {
-        logger.warn('Error getting OAuth 2.0 token, falling back to OAuth 1.0a');
-        if (error instanceof Error) {
-          logger.debug('OAuth 2.0 error:', error.message);
+        logger.warn(`Error getting OAuth 2.0 token, falling back to OAuth 1.0a`);
+        if (axios.isAxiosError(error) && error.response) {
+          logger.debug(`OAuth 2.0 error details: Status ${error.response.status}, Data: ${JSON.stringify(error.response.data || {})}`);
         }
         
         // Fall back to OAuth 1.0a
+        logger.debug(`Using OAuth 1.0a as fallback`);
         const authHeader = this.generateAuthHeader(method, url, method === 'GET' ? params : {});
         headers = {
           Authorization: authHeader,
@@ -166,6 +178,7 @@ export class XClient {
       }
     } else {
       // Use OAuth 1.0a
+      logger.debug(`Using OAuth 1.0a authentication with API key: ${this.apiKey.substring(0, 4)}...`);
       const authHeader = this.generateAuthHeader(method, url, method === 'GET' ? params : {});
       headers = {
         Authorization: authHeader,
@@ -176,12 +189,25 @@ export class XClient {
     try {
       // Check if credentials are available
       if (!this.apiKey || !this.apiSecret) {
-        logger.error('Missing API key or secret');
+        logger.error(`Missing API key or secret`);
         throw new Error('X API key and secret are required');
       }
       
       if (isV2 && method === 'POST' && !this.accessToken) {
-        logger.warn('POST requests to v2 API may require user access token');
+        logger.warn(`POST requests to v2 API may require user access token - current action may fail`);
+        logger.debug(`Check your X Developer Portal for the required app permissions and token types`);
+      }
+      
+      // Log request details for debugging
+      logger.debug(`Making ${method} request to: ${url}${queryString}`);
+      logger.debug(`Request headers: ${JSON.stringify({...headers, Authorization: 'REDACTED'})}`);
+      
+      if (method !== 'GET' && data) {
+        if (data instanceof FormData) {
+          logger.debug(`Request contains FormData payload`);
+        } else {
+          logger.debug(`Request payload: ${JSON.stringify(data)}`);
+        }
       }
       
       const response = await axios({
@@ -191,12 +217,42 @@ export class XClient {
         data: method !== 'GET' ? data : undefined,
       });
       
+      // Log response summary
+      logger.debug(`Response status: ${response.status}`);
+      logger.debug(`Response headers: ${JSON.stringify(response.headers)}`);
+      
+      if (response.data) {
+        const dataSummary = typeof response.data === 'object' 
+          ? `${JSON.stringify(response.data).substring(0, 200)}${JSON.stringify(response.data).length > 200 ? '...' : ''}`
+          : response.data;
+        logger.debug(`Response data (truncated): ${dataSummary}`);
+      }
+      
       return response.data as T;
     } catch (error) {
-      logger.error('Request error:', error);
+      logger.error(`Request error:`, error);
       if (axios.isAxiosError(error) && error.response) {
         logger.error(`API error ${error.response.status}:`, 
           JSON.stringify(error.response.data || error.message));
+        
+        // More detailed logging for specific error codes
+        if (error.response.status === 401) {
+          logger.error('Authentication error: Your credentials are invalid or expired');
+        } else if (error.response.status === 403) {
+          logger.error('Authorization error: You don\'t have permission to perform this action');
+          
+          if (isV2 && method === 'POST') {
+            logger.error('This may be because your app does not have write permissions');
+            logger.error('Check your app permissions in the X Developer Portal');
+          }
+        } else if (error.response.status === 429) {
+          logger.error('Rate limit exceeded: You\'ve made too many requests to the X API');
+          if (error.response.headers['x-rate-limit-reset']) {
+            const resetTime = parseInt(error.response.headers['x-rate-limit-reset'] as string) * 1000;
+            logger.error(`Rate limit will reset at: ${new Date(resetTime).toLocaleString()}`);
+          }
+        }
+        
         throw new Error(
           `X API error: ${error.response.status} - ${
             JSON.stringify(error.response.data) || error.message
@@ -464,10 +520,13 @@ export class XClient {
     media?: MediaFile[]
   ): Promise<string | null> {    
     try {
+      logger.info(`Preparing to send tweet: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
+      
       let endpoint = '/tweets';
       let payload: any = { text };
       
       if (inReplyTo) {
+        logger.debug(`Tweet will be a reply to: ${inReplyTo}`);
         payload.reply = { in_reply_to_tweet_id: inReplyTo };
       }
 
@@ -475,16 +534,32 @@ export class XClient {
       if (media && media.length > 0) {
         const mediaIds = [];
         
+        logger.debug(`Uploading ${media.length} media files for tweet`);
+        
         for (const file of media) {
           const mediaId = await this.uploadMedia(file);
           if (mediaId) {
             mediaIds.push(mediaId);
+            logger.debug(`Media uploaded successfully, ID: ${mediaId}`);
+          } else {
+            logger.warn(`Failed to upload media file: ${file.filename || 'unnamed'}`);
           }
         }
         
         if (mediaIds.length > 0) {
+          logger.debug(`Attaching ${mediaIds.length} media files to tweet`);
           payload.media = { media_ids: mediaIds };
         }
+      }
+
+      logger.debug(`Sending tweet to X API with payload: ${JSON.stringify(payload, null, 2)}`);
+      
+      // Log the authentication details (without secrets)
+      logger.debug(`Using X API credentials - API Key: ${this.apiKey ? '✓' : '✗'}, Access Token: ${this.accessToken ? '✓' : '✗'}`);
+      
+      if (!this.accessToken || !this.accessSecret) {
+        logger.warn('Missing X API access token or secret - required for posting tweets');
+        logger.debug('Check your environment variables or configuration for X API tokens');
       }
 
       const response = await this.request<any>(
@@ -495,18 +570,49 @@ export class XClient {
         payload
       );
       
+      logger.debug(`X API response received: ${JSON.stringify(response || 'null', null, 2)}`);
+      
       if (response && response.data && response.data.id) {
         logger.success(`Tweet successfully posted with ID: ${response.data.id}`);
         return response.data.id;
       } else {
-        logger.warn('Could not extract tweet ID from response');
+        // Check if we have any response data
+        if (response) {
+          logger.warn(`Received response but missing tweet ID. Response: ${JSON.stringify(response)}`);
+          
+          // Check for specific response patterns
+          if (response.errors) {
+            logger.error(`X API returned errors: ${JSON.stringify(response.errors)}`);
+          }
+        } else {
+          logger.warn(`Empty response received from X API`);
+        }
         return null;
       }
     } catch (error) {
-      logger.error('Error sending tweet:', error);
+      logger.error(`Error sending tweet:`, error);
+      
+      // More detailed error handling
       if (error instanceof Error) {
-        logger.debug('Error details:', error.message);
+        logger.debug(`Error type: ${error.name}, Message: ${error.message}`);
+        
+        if (error.message.includes('401')) {
+          logger.error('Authentication error - check your X API credentials');
+          logger.debug('This is usually due to expired or invalid tokens, or incorrect API keys');
+        } else if (error.message.includes('403')) {
+          logger.error('Permission error - your app may not have write permissions');
+          logger.debug('Check your X Developer Portal app settings and ensure Write permissions are enabled');
+        } else if (error.message.includes('duplicate')) {
+          logger.error('Duplicate tweet error - X does not allow posting identical tweets');
+        } else if (error.message.includes('network')) {
+          logger.error('Network error when contacting X API - check your internet connection');
+        }
+        
+        if (error.stack) {
+          logger.debug(`Error stack trace: ${error.stack}`);
+        }
       }
+      
       throw error;
     }
   }
@@ -632,6 +738,92 @@ export class XClient {
       return true;
     } catch (error) {
       logger.error('Error liking tweet:', error);
+      return false;
+    }
+  }
+
+  async init(): Promise<boolean> {
+    try {
+      logger.info('Initializing X API client');
+      
+      if (!this.apiKey || !this.apiSecret) {
+        logger.error('X API credentials missing: API key and API secret are required');
+        return false;
+      }
+      
+      logger.info('Verifying X API credentials...');
+      
+      // Log credential status without revealing sensitive information
+      logger.debug(`Credential check - API Key: ${this.apiKey ? '✓' : '✗'}, API Secret: ${this.apiSecret ? '✓' : '✗'}`);
+      logger.debug(`Credential check - Access Token: ${this.accessToken ? '✓' : '✗'}, Access Secret: ${this.accessSecret ? '✓' : '✗'}`);
+      logger.debug(`Credential check - Client ID: ${this.clientId ? '✓' : '✗'}, Client Secret: ${this.clientSecret ? '✓' : '✗'}`);
+      
+      // Try to verify the credentials by making a simple request
+      logger.debug('Attempting to verify credentials with test API call');
+      
+      if (this.accessToken && this.accessSecret) {
+        try {
+          // Try a simple authenticated request
+          await this.request<any>(
+            'GET',
+            '/account/verify_credentials.json',
+            {},
+            false
+          );
+          logger.info('Successfully connected to X API with full permissions');
+          return true;
+        } catch (error) {
+          if (error instanceof Error) {
+            if (error.message.includes('401')) {
+              logger.error('Authentication error: Invalid access token and/or access token secret');
+              logger.debug('Please check your TWITTER_ACCESS_TOKEN and TWITTER_ACCESS_TOKEN_SECRET environment variables');
+            } else if (error.message.includes('403')) {
+              logger.error('Permission error: Your app may be missing required permissions');
+              logger.debug('Check your X Developer Portal app settings - Read and Write permissions may be required');
+            } else {
+              logger.error(`Error verifying credentials: ${error.message}`);
+            }
+          } else {
+            logger.error('Unknown error during credential verification');
+          }
+        }
+      }
+      
+      // If we don't have user tokens, try to verify read-only access
+      try {
+        // Try a basic read-only request
+        await this.request<any>(
+          'GET',
+          '/users/by/username/twitter',
+          {},
+          true
+        );
+        logger.info('Successfully connected to X API with read permissions');
+        
+        // Warn about limited access if we have no access tokens
+        if (!this.accessToken || !this.accessSecret) {
+          logger.warn('X API access is read-only - certain actions like posting tweets will fail');
+          logger.debug('To enable full access, set TWITTER_ACCESS_TOKEN and TWITTER_ACCESS_TOKEN_SECRET environment variables');
+        }
+        
+        return true;
+      } catch (error) {
+        if (error instanceof Error) {
+          logger.error(`Error connecting to X API: ${error.message}`);
+          
+          if (error.message.includes('401') || error.message.includes('403')) {
+            logger.error('Authentication or permissions issue - check your API credentials');
+            logger.debug('Verify your app settings in the X Developer Portal are correct');
+          } else {
+            logger.debug(`Full error details: ${error.stack || error}`);
+          }
+        } else {
+          logger.error('Unknown error connecting to X API');
+        }
+        return false;
+      }
+    } catch (error) {
+      logger.error('Failed to initialize X API client:', error);
       return false;
     }
   }
