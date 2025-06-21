@@ -72,20 +72,20 @@ export class XPlugin implements PluginInstance {
   async init(): Promise<void> {
     // Check if API credentials are provided
     if (!this.xConfig.apiKey || !this.xConfig.apiSecret) {
-      logger.error('Missing required API key and/or secret');
-      logger.error('Please check your .env file and ensure X_API_KEY and X_API_SECRET_KEY are set');
+      logger.error("X Plugin", "Initialization", 'Missing required API key and/or secret');
+      logger.error("X Plugin", "Initialization", 'Please check your .env file and ensure X_API_KEY and X_API_SECRET_KEY are set');
       throw new Error('X API key and secret are required');
     }
     
     // For sending tweets, we need access token and secret
     if (!this.xConfig.accessToken || !this.xConfig.accessSecret) {
-      logger.warn('Missing X user access token and/or secret');
-      logger.warn('You may not be able to post tweets or perform other write operations');
+      logger.warn("X Plugin", "Initialization", 'Missing X user access token and/or secret');
+      logger.warn("X Plugin", "Initialization", 'You may not be able to post tweets or perform other write operations');
     }
     
     if (!this.xConfig.clientId || !this.xConfig.clientSecret) {
-      logger.warn('Missing X client ID and/or client secret');
-      logger.warn('OAuth 2.0 authentication will not be available');
+      logger.warn("X Plugin", "Initialization", 'Missing X client ID and/or client secret');
+      logger.warn("X Plugin", "Initialization", 'OAuth 2.0 authentication will not be available');
     }
     
     this.client = new XClient(
@@ -99,12 +99,12 @@ export class XPlugin implements PluginInstance {
 
     // Verify credentials by making a test API call
     try {
-      logger.info('Verifying X API credentials...');
+      logger.info("X Plugin", "Initialization", 'Verifying X API credentials...');
       
       // Try to get a user profile as a test
       await this.client.getProfile('X');
       
-      logger.info('Successfully connected to X API with read permissions');
+      logger.info("X Plugin", "Initialization", 'Successfully connected to X API with read permissions');
       
       // Update tools with initialized client
       this.initializeTools();
@@ -112,13 +112,13 @@ export class XPlugin implements PluginInstance {
       // Log a summary of tools instead of individual tool logs
       this.logToolsSummary();
       
-      logger.success('X plugin initialized successfully');
+      logger.success("X Plugin", "Initialization", 'X plugin initialized successfully');
     } catch (error) {
-      logger.error('Failed to verify X API credentials', error);
+      logger.error("X Plugin", "Initialization", 'Failed to verify X API credentials');
       if (error instanceof Error) {
         // Check for common authentication errors
         if (error.message.includes('401') || error.message.includes('403')) {
-          logger.error('Authentication error. Please check your X API credentials.');
+          logger.error("X Plugin", "Authentication", 'Authentication error. Please check your X API credentials.');
         }
         
         throw new Error(`X API initialization failed: ${error.message}`);
@@ -133,7 +133,7 @@ export class XPlugin implements PluginInstance {
    */
   private logToolsSummary(): void {
     const toolNames = Array.from(this.tools.keys());
-    logger.info(`X plugin registered ${toolNames.length} tools: ${toolNames.join(', ')}`);
+    logger.info("X Plugin", "Tools", `Registered ${toolNames.length} tools: ${toolNames.join(', ')}`);
   }
 
   /**
@@ -162,7 +162,7 @@ export class XPlugin implements PluginInstance {
           const methodName = funcDef.name.replace('x_', '');
           
           // Log tool execution for debugging
-          logger.debug(`TOOL EXECUTION: Running tool ${funcDef.name}`);
+          logger.debug("X Plugin", "Tool", `Running tool ${funcDef.name}`);
           
           let result;
           
@@ -173,7 +173,7 @@ export class XPlugin implements PluginInstance {
               case 'get_tweet': result = await this.getTweet(params); break;
               case 'search_tweets': result = await this.searchTweets(params); break;
               case 'send_tweet': 
-                logger.info(`Sending tweet: "${params.text}"`);
+                logger.info("X Plugin", "Tweet", `Sending tweet: "${params.text}"`);
                 result = await this.sendTweet(params); 
                 break;
               case 'send_tweet_with_poll': result = await this.sendTweetWithPoll(params); break;
@@ -188,10 +188,10 @@ export class XPlugin implements PluginInstance {
               result = { ...params };
             }
             
-            logger.debug(`Tool ${funcDef.name} completed execution`);
+            logger.debug("X Plugin", "Tool", `Tool ${funcDef.name} completed execution`);
             return result;
           } catch (error) {
-            logger.error(`Error executing tool ${funcDef.name}:`, error);
+            logger.error("X Plugin", "Tool", `Error executing tool ${funcDef.name}: ${error}`);
             if (error instanceof Error) throw error;
             else throw new Error(`Error executing ${methodName}: ${error}`);
           }
@@ -432,14 +432,50 @@ export class XPlugin implements PluginInstance {
    * Remove a tool by name
    */
   removeTool(name: string): boolean {
-    const removed = this.tools.delete(name);
-    
-    // Update plugin config
-    if (removed) {
-      this.config.tools = Array.from(this.tools.values());
+    const result = this.tools.delete(name);
+    this.config.tools = Array.from(this.tools.values());
+    return result;
+  }
+
+  /**
+   * Check if a tool exists
+   */
+  hasTool(name: string): boolean {
+    return this.tools.has(name);
+  }
+
+  /**
+   * Get the number of registered tools
+   */
+  getToolCount(): number {
+    return this.tools.size;
+  }
+
+  /**
+   * Execute a tool by name
+   */
+  async executeTool(name: string, params: Record<string, any>): Promise<any> {
+    const tool = this.getTool(name);
+    if (!tool) {
+      throw new Error(`Tool ${name} not found`);
     }
-    
-    return removed;
+    return await tool.execute(params);
+  }
+
+  /**
+   * Initialize all registered tools
+   */
+  async initializeAll(): Promise<void> {
+    // Initialize the plugin itself
+    await this.init();
+  }
+
+  /**
+   * Cleanup all registered tools
+   */
+  async cleanupAll(): Promise<void> {
+    // Cleanup the plugin itself
+    this.client = null;
   }
 
   /**
@@ -524,38 +560,35 @@ export class XPlugin implements PluginInstance {
    * Send a new tweet
    */
   async sendTweet(params: Record<string, any>): Promise<any> {
-    if (!this.client) {
-      logger.error('X client not initialized in sendTweet method');
+        if (!this.client) {
+      logger.error("X Plugin", "Tweet", 'X client not initialized in sendTweet method');
       throw new Error('X client not initialized');
     }
     
     const { text, in_reply_to } = params;
     
     if (!text) {
-      logger.error('Tweet text is missing in sendTweet parameters');
+      logger.error("X Plugin", "Tweet", 'Tweet text is missing in sendTweet parameters');
       throw new Error('Tweet text is required');
     }
     
-    logger.info(`About to send tweet with text: "${text}"${in_reply_to ? ` as reply to: ${in_reply_to}` : ''}`);
+    logger.info("X Plugin", "Tweet", `About to send tweet with text: "${text}"${in_reply_to ? ` as reply to: ${in_reply_to}` : ''}`);
     
     try {
-      logger.debug(`Calling X client sendTweet method with parameters:`, { 
-        textLength: text.length, 
-        hasReplyTo: !!in_reply_to 
-      });
+      logger.debug("X Plugin", "Tweet", `Calling X client sendTweet method with parameters: textLength=${text.length}, hasReplyTo=${!!in_reply_to}`);
       
       const tweetId = await this.client.sendTweet(text, in_reply_to);
       
       if (tweetId) {
-        logger.info(`Tweet successfully posted with ID: ${tweetId}`);
+        logger.info("X Plugin", "Tweet", `Tweet successfully posted with ID: ${tweetId}`);
         return {
           success: true,
           id: tweetId,
           text,
         };
       } else {
-        logger.warn(`No tweet ID returned from X API, this might indicate the tweet was not actually posted`);
-        logger.debug(`Tweet attempt details: Text: "${text.substring(0, 20)}..."`);
+        logger.warn("X Plugin", "Tweet", `No tweet ID returned from X API, this might indicate the tweet was not actually posted`);
+        logger.debug("X Plugin", "Tweet", `Tweet attempt details: Text: "${text.substring(0, 20)}..."`);
         return {
           success: true, // We keep this as true for backward compatibility
           id: null,
@@ -565,20 +598,20 @@ export class XPlugin implements PluginInstance {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`Error posting tweet: ${errorMessage}`);
-      logger.debug(`Tweet that failed: "${text}"`);
+      logger.error("X Plugin", "Tweet", `Error posting tweet: ${errorMessage}`);
+      logger.debug("X Plugin", "Tweet", `Tweet that failed: "${text}"`);
       
       if (error instanceof Error && error.stack) {
-        logger.debug(`Error stack trace: ${error.stack}`);
+        logger.debug("X Plugin", "Tweet", `Error stack trace: ${error.stack}`);
       }
       
       // Check for specific error types
       if (errorMessage.includes('401')) {
-        logger.error('Authentication error - check X API credentials and token validity');
+        logger.error("X Plugin", "Authentication", 'Authentication error - check X API credentials and token validity');
       } else if (errorMessage.includes('403')) {
-        logger.error('Permission error - your X app may not have write permissions');
+        logger.error("X Plugin", "Permission", 'Permission error - your X app may not have write permissions');
       } else if (errorMessage.includes('duplicate')) {
-        logger.warn('Duplicate tweet error - X doesn\'t allow identical tweets');
+        logger.warn("X Plugin", "Tweet", 'Duplicate tweet error - X doesn\'t allow identical tweets');
       }
       
       return {
@@ -602,17 +635,17 @@ export class XPlugin implements PluginInstance {
       throw new Error('At least two poll options are required');
     }
     
-    logger.info(`About to send tweet with poll: "${text}"`);
+    logger.info("X Plugin", "Poll", `About to send tweet with poll: "${text}"`);
     
     try {
-      logger.debug('Calling X client sendTweetWithPoll method');
+      logger.debug("X Plugin", "Poll", 'Calling X client sendTweetWithPoll method');
       const tweetId = await this.client.sendTweetWithPoll(text, {
         options: [poll_option_1, poll_option_2, poll_option_3, poll_option_4].filter(Boolean),
         durationMinutes: duration_minutes || 1440 // Default to 24 hours
       });
       
       if (tweetId) {
-        logger.info(`Tweet with poll successfully posted with ID: ${tweetId}`);
+        logger.info("X Plugin", "Poll", `Tweet with poll successfully posted with ID: ${tweetId}`);
         return {
           success: true,
           id: tweetId,
@@ -620,7 +653,7 @@ export class XPlugin implements PluginInstance {
           poll_options: [poll_option_1, poll_option_2, poll_option_3, poll_option_4].filter(Boolean),
         };
       } else {
-        logger.warn('No tweet ID returned from X API for poll tweet');
+        logger.warn("X Plugin", "Poll", 'No tweet ID returned from X API for poll tweet');
         return {
           success: true,
           id: null,
@@ -630,7 +663,7 @@ export class XPlugin implements PluginInstance {
         };
       }
     } catch (error) {
-      logger.error(`Error posting tweet with poll: ${error}`);
+      logger.error("X Plugin", "Poll", `Error posting tweet with poll: ${error}`);
       
       return {
         success: false,
@@ -649,19 +682,19 @@ export class XPlugin implements PluginInstance {
     const id = params.id;
     if (!id) throw new Error('Tweet ID is required');
 
-    logger.info(`Attempting to retweet tweet with ID: ${id}`);
+    logger.info("X Plugin", "Retweet", `Attempting to retweet tweet with ID: ${id}`);
     
     try {
       const success = await this.client.retweet(id);
       
       if (success) {
-        logger.info(`Successfully retweeted tweet ${id}`);
+        logger.info("X Plugin", "Retweet", `Successfully retweeted tweet ${id}`);
         return { 
           success: true,
           id
         };
       } else {
-        logger.warn(`Failed to retweet tweet ${id}`);
+        logger.warn("X Plugin", "Retweet", `Failed to retweet tweet ${id}`);
         return { 
           success: false,
           id,
@@ -669,7 +702,7 @@ export class XPlugin implements PluginInstance {
         };
       }
     } catch (error) {
-      logger.error(`Error retweeting tweet: ${error}`);
+      logger.error("X Plugin", "Retweet", `Error retweeting tweet: ${error}`);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -687,19 +720,19 @@ export class XPlugin implements PluginInstance {
     const id = params.id;
     if (!id) throw new Error('Tweet ID is required');
 
-    logger.info(`Attempting to like tweet with ID: ${id}`);
+    logger.info("X Plugin", "Like", `Attempting to like tweet with ID: ${id}`);
     
     try {
       const success = await this.client.likeTweet(id);
       
       if (success) {
-        logger.info(`Successfully liked tweet ${id}`);
+        logger.info("X Plugin", "Like", `Successfully liked tweet ${id}`);
         return { 
           success: true,
           id
         };
       } else {
-        logger.warn(`Failed to like tweet ${id}`);
+        logger.warn("X Plugin", "Like", `Failed to like tweet ${id}`);
         return { 
           success: false,
           id,
@@ -707,7 +740,7 @@ export class XPlugin implements PluginInstance {
         };
       }
     } catch (error) {
-      logger.error(`Error liking tweet: ${error}`);
+      logger.error("X Plugin", "Like", `Error liking tweet: ${error}`);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),

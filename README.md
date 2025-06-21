@@ -41,8 +41,13 @@ LOG_LEVEL=info  # Options: error, warn, info, debug
 ### Basic Usage
 
 ```typescript
-import { createAgent } from 'astreus';
+import { createAgent, createProvider, createMemory, createDatabase } from '@astreus-ai/astreus';
 import XPlugin from '@astreus-ai/x-plugin';
+
+// Initialize database and memory
+const db = await createDatabase();
+const memory = await createMemory({ database: db });
+const provider = createProvider({ type: 'openai', model: 'gpt-4o-mini' });
 
 // Create an X plugin instance
 const xPlugin = new XPlugin();
@@ -54,8 +59,13 @@ await xPlugin.init();
 const agent = await createAgent({
   name: 'Social Media Agent',
   description: 'An agent that can interact with X',
-  plugins: [xPlugin]
+  provider: provider,
+  memory: memory,
+  database: db
 });
+
+// Add X plugin tools to the agent
+xPlugin.getTools().forEach(tool => agent.addTool(tool));
 
 // Now the agent can use X functionality
 const response = await agent.chat(`Find the latest tweets from Elon Musk and summarize them.`);
@@ -64,8 +74,13 @@ const response = await agent.chat(`Find the latest tweets from Elon Musk and sum
 ### Custom Configuration
 
 ```typescript
-import { createAgent } from 'astreus';
+import { createAgent, createProvider, createMemory, createDatabase } from '@astreus-ai/astreus';
 import XPlugin from '@astreus-ai/x-plugin';
+
+// Initialize database and memory
+const db = await createDatabase();
+const memory = await createMemory({ database: db });
+const provider = createProvider({ type: 'openai', model: 'gpt-4o-mini' });
 
 // Create a plugin with custom configuration
 const xPlugin = new XPlugin({
@@ -84,8 +99,13 @@ await xPlugin.init();
 const agent = await createAgent({
   name: 'Social Media Agent',
   description: 'An agent that can interact with X',
-  plugins: [xPlugin]
+  provider: provider,
+  memory: memory,
+  database: db
 });
+
+// Add X plugin tools to the agent
+xPlugin.getTools().forEach(tool => agent.addTool(tool));
 ```
 
 ## Available Tools
