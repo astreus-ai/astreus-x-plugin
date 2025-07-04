@@ -1,3 +1,5 @@
+![X Plugin](src/assets/x-plugin.webp)
+
 # Astreus X Plugin
 
 An X (formerly Twitter) integration plugin for the Astreus AI agent framework, allowing agents to interact with X.
