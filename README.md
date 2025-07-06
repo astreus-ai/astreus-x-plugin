@@ -43,7 +43,7 @@ LOG_LEVEL=info  # Options: error, warn, info, debug
 ### Basic Usage
 
 ```typescript
-import { createAgent, createProvider, createMemory, createDatabase } from '@astreus-ai/astreus';
+import { createAgent, createProvider, createMemory, createDatabase, PluginManager } from '@astreus-ai/astreus';
 import XPlugin from '@astreus-ai/x-plugin';
 
 // Initialize database and memory
@@ -57,17 +57,21 @@ const xPlugin = new XPlugin();
 // Initialize the plugin
 await xPlugin.init();
 
-// Create an agent with the X plugin
+// Create a plugin manager and add the X plugin
+const pluginManager = new PluginManager({
+  name: 'social-plugins',
+  tools: xPlugin.getTools()
+});
+
+// Create an agent with the plugin manager
 const agent = await createAgent({
   name: 'Social Media Agent',
   description: 'An agent that can interact with X',
   provider: provider,
   memory: memory,
-  database: db
+  database: db,
+  plugins: [pluginManager]
 });
-
-// Add X plugin tools to the agent
-xPlugin.getTools().forEach(tool => agent.addTool(tool));
 
 // Now the agent can use X functionality
 const response = await agent.chat(`Find the latest tweets from Elon Musk and summarize them.`);
@@ -76,7 +80,7 @@ const response = await agent.chat(`Find the latest tweets from Elon Musk and sum
 ### Custom Configuration
 
 ```typescript
-import { createAgent, createProvider, createMemory, createDatabase } from '@astreus-ai/astreus';
+import { createAgent, createProvider, createMemory, createDatabase, PluginManager } from '@astreus-ai/astreus';
 import XPlugin from '@astreus-ai/x-plugin';
 
 // Initialize database and memory
@@ -97,17 +101,21 @@ const xPlugin = new XPlugin({
 // Initialize the plugin
 await xPlugin.init();
 
-// Create an agent with the plugin
+// Create a plugin manager and add the X plugin
+const pluginManager = new PluginManager({
+  name: 'social-plugins',
+  tools: xPlugin.getTools()
+});
+
+// Create an agent with the plugin manager
 const agent = await createAgent({
   name: 'Social Media Agent',
   description: 'An agent that can interact with X',
   provider: provider,
   memory: memory,
-  database: db
+  database: db,
+  plugins: [pluginManager]
 });
-
-// Add X plugin tools to the agent
-xPlugin.getTools().forEach(tool => agent.addTool(tool));
 ```
 
 ## Available Tools
